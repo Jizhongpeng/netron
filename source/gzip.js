@@ -6,12 +6,14 @@ var gzip = gzip || {};
 gzip.Archive = class {
 
     constructor(buffer) {
+        const reader = buffer instanceof Uint8Array ? new gzip.Reader(buffer) : buffer;
         this._entries = [];
-        if (buffer.length < 18 || buffer[0] !== 0x1f || buffer[1] !== 0x8b) {
+        const signature = [ 0x1f, 0x8b ];
+        if (reader.length < 18 || !reader.peek(2).every((value, index) => value === signature[index])) {
             throw new gzip.Error('Invalid gzip archive.');
         }
-        const reader = new gzip.Reader(buffer, 0, buffer.length);
         this._entries.push(new gzip.Entry(reader));
+        reader.seek(0);
     }
 
     get entries() {
@@ -22,7 +24,8 @@ gzip.Archive = class {
 gzip.Entry = class {
 
     constructor(reader) {
-        if (!reader.match([ 0x1f, 0x8b ])) {
+        const signature = [ 0x1f, 0x8b ];
+        if (reader.position + 2 > reader.length || !reader.read(2).every((value, index) => value === signature[index])) {
             throw new gzip.Error('Invalid gzip signature.');
         }
         const compressionMethod = reader.byte();
@@ -46,7 +49,7 @@ gzip.Entry = class {
         if ((flags & 1) != 0) {
             reader.uint16(); // CRC16
         }
-        const compressedData = reader.bytes();
+        const compressedData = reader.read();
         if (typeof process === 'object' && typeof process.versions == 'object' && typeof process.versions.node !== 'undefined') {
             this._data = require('zlib').inflateRawSync(compressedData);
         }
@@ -76,23 +79,11 @@ gzip.Entry = class {
 
 gzip.Reader = class {
 
-    constructor(buffer, start, end) {
+    constructor(buffer) {
         this._buffer = buffer;
-        this._position = start;
-        this._end = end;
+        this._position = 0;
+        this._length = buffer.length;
         this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    }
-
-    match(signature) {
-        if (this._position + signature.length <= this._end) {
-            for (let i = 0; i < signature.length; i++) {
-                if (this._buffer[this._position + i] != signature[i]) {
-                    return false;
-                }
-            }
-        }
-        this._position += signature.length;
-        return true;
     }
 
     get position() {
@@ -100,20 +91,20 @@ gzip.Reader = class {
     }
 
     seek(position) {
-        this._position = position >= 0 ? position : this._end + position;
+        this._position = position >= 0 ? position : this._length + position;
     }
 
     skip(offset) {
         this._position += offset;
-        if (this._position > this._end) {
-            throw new gzip.Error('Expected ' + (this._position - this._end) + ' more bytes. The file might be corrupted. Unexpected end of file.');
+        if (this._position > this._length) {
+            throw new gzip.Error('Expected ' + (this._position - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
         }
     }
 
-    bytes(size) {
+    read(length) {
         const position = this._position;
-        size = size === undefined ? (this._end - position) : size;
-        this.skip(size);
+        length = length !== undefined ? length : this._length - position;
+        this.skip(length);
         return this._buffer.subarray(position, this._position);
     }
 

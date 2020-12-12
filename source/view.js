@@ -341,7 +341,7 @@ view.View = class {
     }
 
     open(context) {
-        this._host.event('Model', 'Open', 'Size', context.buffer.length);
+        this._host.event('Model', 'Open', 'Size', context.reader.length);
         this._sidebar.close();
         return this._timeout(2).then(() => {
             return this._modelFactoryService.open(context).then((model) => {
@@ -1040,7 +1040,7 @@ view.ModelContext = class {
     }
 
     get buffer() {
-        return this._context.buffer;
+        return this._context.reader.peek();
     }
 
     entries(format) {
@@ -1149,7 +1149,7 @@ view.ArchiveContext = class {
             }
         }
         this._identifier = identifier.substring(rootFolder.length);
-        this._buffer = buffer;
+        this._reader = new view.ArchiveContext.BinaryReader(buffer);
     }
 
     request(file, encoding) {
@@ -1157,7 +1157,7 @@ view.ArchiveContext = class {
         if (!entry) {
             return Promise.reject(new Error('File not found.'));
         }
-        const data = encoding ? new TextDecoder(encoding).decode(entry.data) : entry.data;
+        const data = encoding ? new TextDecoder(encoding).decode(entry.data) : new view.ArchiveContext.BinaryReader(entry.data);
         return Promise.resolve(data);
     }
 
@@ -1166,7 +1166,100 @@ view.ArchiveContext = class {
     }
 
     get buffer() {
-        return this._buffer;
+        return this.reader.peek();
+    }
+
+    get reader() {
+        return this._reader;
+    }
+};
+
+view.ArchiveContext.BinaryReader = class {
+
+    constructor(buffer) {
+        this._buffer = buffer;
+        this._length = buffer.length;
+        this._position = 0;
+        this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    }
+
+    get position() {
+        return this._position;
+    }
+
+    get length() {
+        return this._length;
+    }
+
+    seek(position) {
+        this._position = position >= 0 ? position : this._length + position;
+    }
+
+    skip(offset) {
+        this._position += offset;
+    }
+
+    peek(length) {
+        if (this._position === 0 && length === undefined) {
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        const end = this._position;
+        this.seek(position);
+        return this._buffer.subarray(position, end);
+    }
+
+    read(length) {
+        if (this._position === 0 && length === undefined) {
+            this._position = this._length;
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        return this._buffer.subarray(position, this._position);
+    }
+
+    byte() {
+        const position = this._position;
+        this.skip(1);
+        return this._buffer[position];
+    }
+
+    uint16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getUint16(position, true);
+    }
+
+    uint32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getUint32(position, true);
+    }
+
+    uint64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getUint64(position, true);
+    }
+
+    int16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getInt16(position, true);
+    }
+
+    int32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getInt32(position, true);
+    }
+
+    int64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getInt64(position, true);
     }
 };
 
@@ -1314,13 +1407,14 @@ view.ModelFactoryService = class {
 
     _openArchive(context) {
         const entries = new Map();
+        let reader = context.reader;
         let extension;
         let identifier = context.identifier;
-        let buffer = context.buffer;
+        let buffer = reader.peek(Math.min(512, reader.length));
         try {
             extension = identifier.split('.').pop().toLowerCase();
             if (extension === 'gz' || extension === 'tgz' || (buffer.length >= 18 && buffer[0] === 0x1f && buffer[1] === 0x8b)) {
-                const entries = new gzip.Archive(buffer).entries;
+                const entries = new gzip.Archive(reader).entries;
                 if (entries.length === 1) {
                     const entry = entries[0];
                     if (entry.name) {
@@ -1338,7 +1432,8 @@ view.ModelFactoryService = class {
                             }
                         }
                     }
-                    buffer = entry.data;
+                    reader = new view.ArchiveContext.BinaryReader(entry.data);
+                    buffer = reader.peek(Math.min(512, reader.length));
                 }
             }
         }
@@ -1350,7 +1445,7 @@ view.ModelFactoryService = class {
         try {
             extension = identifier.split('.').pop().toLowerCase();
             if (extension === 'zip' || (buffer.length > 2 && buffer[0] === 0x50 && buffer[1] === 0x4B)) {
-                entries.set('zip', new zip.Archive(buffer).entries);
+                entries.set('zip', new zip.Archive(reader).entries);
             }
             if (extension === 'tar' || (buffer.length >= 512)) {
                 let sum = 0;
@@ -1363,7 +1458,7 @@ view.ModelFactoryService = class {
                 }
                 checksum = parseInt(checksum, 8);
                 if (!isNaN(checksum) && sum === checksum) {
-                    entries.set('tar', new tar.Archive(buffer).entries);
+                    entries.set('tar', new tar.Archive(reader).entries);
                 }
             }
         }
@@ -1521,8 +1616,19 @@ view.ModelFactoryService = class {
     }
 
     _openSignature(context) {
-        const buffer = context.buffer;
-        if (buffer.length === 0 || buffer.every((value) => value === 0x00)) {
+        const reader = context.reader;
+        let empty = true;
+        let position = 0;
+        while (empty && position < reader.length) {
+            const buffer = reader.read(Math.min(4096, reader.length - position));
+            position += buffer.length;
+            if (!buffer.every((value) => value === 0x00)) {
+                empty = false;
+                break;
+            }
+        }
+        reader.seek(0);
+        if (empty) {
             return Promise.reject(new view.ModelError('File has no content.', true));
         }
         /* eslint-disable no-control-regex */
@@ -1541,7 +1647,8 @@ view.ModelFactoryService = class {
             { name: "TensorFlow Hub module", value: /^\x08\x03$/, identifier: 'tfhub_module.pb' }
         ];
         /* eslint-enable no-control-regex */
-        const text = new TextDecoder().decode(buffer.subarray(0, Math.min(4096, buffer.length)));
+        const buffer = reader.peek(Math.min(4096, reader.length));
+        const text = new TextDecoder().decode(buffer);
         for (const entry of entries) {
             if (text.match(entry.value) && (!entry.identifier || entry.identifier === context.identifier)) {
                 return Promise.reject(new view.ModelError("Invalid file content. File contains " + entry.name + ".", true));

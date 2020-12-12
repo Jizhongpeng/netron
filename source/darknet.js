@@ -50,12 +50,14 @@ darknet.ModelFactory = class {
             const basename = parts.join('.');
             switch (extension) {
                 case 'weights':
-                    return context.request(basename + '.cfg', null).then((cfg) => {
-                        return open(metadata, cfg, context.buffer);
+                    return context.request(basename + '.cfg', null).then((reader) => {
+                        const buffer = reader.read();
+                        return open(metadata, buffer, context.buffer);
                     });
                 default:
-                    return context.request(basename + '.weights', null).then((weights) => {
-                        return open(metadata, context.buffer, weights);
+                    return context.request(basename + '.weights', null).then((reader) => {
+                        const buffer = reader.read();
+                        return open(metadata, context.buffer, buffer);
                     }).catch(() => {
                         return open(metadata, context.buffer, null);
                     });

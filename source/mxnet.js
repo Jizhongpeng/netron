@@ -54,8 +54,9 @@ mxnet.ModelFactory = class {
                     }
                     basename = mxnet.ModelFactory._basename(identifier, 'json', 'symbol');
                     if (basename) {
-                        return context.request(basename + '-0000.params', null).then((params) => {
-                            return this._openModel(identifier, format, null, symbol, null, params, host);
+                        return context.request(basename + '-0000.params', null).then((reader) => {
+                            const buffer = reader.read();
+                            return this._openModel(identifier, format, null, symbol, null, buffer, host);
                         }).catch(() => {
                             return this._openModel(identifier, format, null, symbol, null, params, host);
                         });

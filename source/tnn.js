@@ -42,15 +42,17 @@ tnn.ModelFactory = class {
             const identifier = context.identifier.toLowerCase();
             if (identifier.endsWith('.tnnproto')) {
                 const tnnmodel = context.identifier.substring(0, context.identifier.length - 9) + '.tnnmodel';
-                return context.request(tnnmodel, null).then((tnnmodel) => {
-                    return new tnn.Model(metadata, context.buffer, tnnmodel);
+                return context.request(tnnmodel, null).then((reader) => {
+                    const buffer = reader.read();
+                    return new tnn.Model(metadata, context.buffer, buffer);
                 }).catch(() => {
                     return new tnn.Model(metadata, context.buffer, null);
                 });
             }
             else if (identifier.endsWith('.tnnmodel')) {
                 const tnnproto = context.identifier.substring(0, context.identifier.length - 9) + '.tnnproto';
-                return context.request(tnnproto, null).then((buffer) => {
+                return context.request(tnnproto, null).then((reader) => {
+                    const buffer = reader.read();
                     return new tnn.Model(metadata, buffer, context.buffer);
                 });
             }

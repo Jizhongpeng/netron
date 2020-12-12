@@ -67,16 +67,18 @@ ncnn.ModelFactory = class {
                 else if (identifier.endsWith('.cfg.ncnn')) {
                     bin = context.identifier.substring(0, context.identifier.length - 9) + '.weights.ncnn';
                 }
-                return context.request(bin, null).then((bin) => {
-                    return openText(context.buffer, bin);
+                return context.request(bin, null).then((reader) => {
+                    const buffer = reader.read();
+                    return openText(context.buffer, buffer);
                 }).catch(() => {
                     return openText(context.buffer, null);
                 });
             }
             else if (identifier.endsWith('.param.bin')) {
                 bin = context.identifier.substring(0, context.identifier.length - 10) + '.bin';
-                return context.request(bin, null).then((bin) => {
-                    return openBinary(context.buffer, bin);
+                return context.request(bin, null).then((reader) => {
+                    const buffer = reader.read();
+                    return openBinary(context.buffer, buffer);
                 }).catch(() => {
                     return openBinary(context.buffer, null);
                 });
@@ -89,7 +91,8 @@ ncnn.ModelFactory = class {
                 else if (identifier.endsWith('.weights.ncnn')) {
                     text = context.identifier.substring(0, context.identifier.length - 13) + '.cfg.ncnn';
                 }
-                return context.request(text, null).then((buffer) => {
+                return context.request(text, null).then((reader) => {
+                    const buffer = reader.read();
                     return openText(buffer, context.buffer);
                 });
             }

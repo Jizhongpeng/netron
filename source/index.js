@@ -809,6 +809,94 @@ host.Dropdown = class {
     }
 };
 
+host.BrowserHost.BinaryReader = class {
+
+    constructor(buffer) {
+        this._buffer = buffer;
+        this._length = buffer.length;
+        this._position = 0;
+        this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    }
+
+    get position() {
+        return this._position;
+    }
+
+    get length() {
+        return this._length;
+    }
+
+    seek(position) {
+        this._position = position >= 0 ? position : this._length + position;
+    }
+
+    skip(offset) {
+        this._position += offset;
+    }
+
+    peek(length) {
+        if (this._position === 0 && length === undefined) {
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        const end = this._position;
+        this.seek(position);
+        return this._buffer.subarray(position, end);
+    }
+
+    read(length) {
+        if (this._position === 0 && length === undefined) {
+            this._position = this._length;
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        return this._buffer.subarray(position, this._position);
+    }
+
+    byte() {
+        const position = this._position;
+        this.skip(1);
+        return this._buffer[position];
+    }
+
+    uint16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getUint16(position, true);
+    }
+
+    uint32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getUint32(position, true);
+    }
+
+    uint64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getUint64(position, true);
+    }
+
+    int16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getInt16(position, true);
+    }
+
+    int32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getInt32(position, true);
+    }
+
+    int64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getInt64(position, true);
+    }
+};
 
 host.BrowserHost.BrowserFileContext = class {
 
@@ -824,13 +912,13 @@ host.BrowserHost.BrowserFileContext = class {
         return this._file.name;
     }
 
-    get buffer() {
-        return this._buffer;
+    get reader() {
+        return this._reader;
     }
 
     open() {
-        return this.request(this._file.name, null).then((data) => {
-            this._buffer = data;
+        return this.request(this._file.name, null).then((reader) => {
+            this._reader = reader;
         });
     }
 
@@ -875,9 +963,9 @@ host.BrowserHost.BrowserFileContext = class {
 
 host.BrowserHost.BrowserContext = class {
 
-    constructor(host, url, identifier, buffer) {
+    constructor(host, url, identifier, reader) {
         this._host = host;
-        this._buffer = buffer;
+        this._reader = reader;
         if (identifier) {
             this._identifier = identifier;
             this._base = url;
@@ -900,8 +988,8 @@ host.BrowserHost.BrowserContext = class {
         return this._identifier;
     }
 
-    get buffer() {
-        return this._buffer;
+    get reader() {
+        return this._reader;
     }
 };
 

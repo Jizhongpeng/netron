@@ -57,7 +57,8 @@ caffe.ModelFactory = class {
                         else if (solver.net || solver.train_net) {
                             let file = solver.net || solver.train_net;
                             file = file.split('/').pop();
-                            return context.request(file, null).then((buffer) => {
+                            return context.request(file, null).then((reader) => {
+                                const buffer = reader.read();
                                 return this._openNetParameterText(metadata, buffer);
                             }).catch((error) => {
                                 if (error) {

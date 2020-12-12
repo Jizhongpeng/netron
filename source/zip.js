@@ -7,10 +7,55 @@ zip.Archive = class {
 
     constructor(buffer) {
         this._entries = [];
-        if (buffer.length < 4 || buffer[0] != 0x50 || buffer[1] != 0x4B) {
+        const reader = buffer instanceof Uint8Array ? new zip.BinaryReader(buffer) : buffer;
+        const signature = [ 0x50, 0x4B, 0x01, 0x02 ];
+        if (reader.length < 4 || !reader.peek(2).every((value, index) => value === signature[index])) {
             throw new zip.Error('Invalid Zip archive.');
         }
-        let reader = null;
+        const lookup = (reader, signature) => {
+            let position = reader.length - 4096;
+            while (position !== 0) {
+                position = Math.max(0, position);
+                reader.seek(position);
+                const buffer = reader.read(Math.min(reader.length - position, 4096));
+                for (let i = buffer.length - 4; i >= 0; i--) {
+                    if (signature[0] === buffer[i] &&
+                        signature[1] === buffer[i + 1] &&
+                        signature[2] === buffer[i + 2] &&
+                        signature[3] === buffer[i + 3]) {
+                        reader.seek(position + i + 4);
+                        return true;
+                    }
+                }
+                position += 4000;
+            }
+            return false;
+        };
+        if (!lookup(reader, [ 0x50, 0x4B, 0x05, 0x06 ])) {
+            throw new zip.Error('End of central directory not found.');
+        }
+        reader.skip(12);
+        let offset = reader.uint32(); // central directory offset
+        if (offset > buffer.length) {
+            if (!lookup(reader, [ 0x50, 0x4B, 0x06, 0x06 ])) {
+                throw new zip.Error('Zip64 end of central directory not found.');
+            }
+            reader.skip(44);
+            offset = reader.uint32();
+            if (reader.uint32() !== 0) {
+                throw new zip.Error('Zip 64-bit central directory offset not supported.');
+            }
+        }
+        if (offset > buffer.length) {
+            throw new zip.Error('Invalid central directory offset.');
+        }
+        reader.seek(offset); // central directory offset
+        while (reader.position + 4 < reader.length && reader.read(4).every((value, index) => value === signature[index])) {
+            this._entries.push(new zip.Entry(reader));
+        }
+        reader.seek(0);
+
+        /*
         const find = (buffer, signature) => {
             for (let i = buffer.length - 4; i >= 0; i--) {
                 if (signature[0] === buffer[i] &&
@@ -45,9 +90,11 @@ zip.Archive = class {
             throw new zip.Error('Invalid central directory offset.');
         }
         reader.seek(offset); // central directory offset
-        while (reader.match([ 0x50, 0x4B, 0x01, 0x02 ])) {
+        const signature = [ 0x50, 0x4B, 0x01, 0x02 ];
+        while (reader.position + 4 < reader.length && reader.match([ 0x50, 0x4B, 0x01, 0x02 ])) {
             this._entries.push(new zip.Entry(reader));
         }
+        */
     }
 
     get entries() {
@@ -76,7 +123,7 @@ zip.Entry = class {
         reader.uint16(); // internal file attributes
         reader.uint32(); // external file attributes
         let localHeaderOffset = reader.uint32();
-        let nameBuffer = reader.bytes(nameLength);
+        let nameBuffer = reader.read(nameLength);
         if (extraDataLength > 0) {
             const end = reader.position + extraDataLength;
             while (reader.position < end) {
@@ -86,13 +133,22 @@ zip.Entry = class {
                 switch (type) {
                     case 0x0001:
                         if (this._size === 0xffffffff) {
-                            this._size = reader.uint64();
+                            this._size = reader.uint32();
+                            if (reader.uint32() !== 0) {
+                                throw new zip.Error('Zip 64-bit offset not supported.');
+                            }
                         }
                         if (this._compressedSize === 0xffffffff) {
-                            this._compressedSize = reader.uint64();
+                            this._compressedSize = reader.uint32();
+                            if (reader.uint32() !== 0) {
+                                throw new zip.Error('Zip 64-bit offset not supported.');
+                            }
                         }
                         if (localHeaderOffset === 0xffffffff) {
-                            localHeaderOffset = reader.uint64();
+                            localHeaderOffset = reader.uint32();
+                            if (reader.uint32() !== 0) {
+                                throw new zip.Error('Zip 64-bit offset not supported.');
+                            }
                         }
                         if (disk === 0xffff) {
                             disk = reader.uint32();
@@ -102,22 +158,23 @@ zip.Entry = class {
                 reader.seek(position + size);
             }
         }
-        reader.bytes(commentLength); // comment
+        reader.read(commentLength); // comment
         const position = reader.position;
         reader.seek(localHeaderOffset);
-        if (!reader.match([ 0x50, 0x4B, 0x03, 0x04 ])) {
+        const signature = [ 0x50, 0x4B, 0x03, 0x04 ];
+        if (reader.position + 4 > reader.length || !reader.read(4).every((value, index) => value === signature[index])) {
             throw new zip.Error('Invalid local file header signature.');
         }
         reader.skip(22);
         nameLength = reader.uint16();
         extraDataLength = reader.uint16();
-        nameBuffer = reader.bytes(nameLength);
+        nameBuffer = reader.read(nameLength);
         reader.skip(extraDataLength);
         this._name = '';
         for (const c of nameBuffer) {
             this._name += String.fromCharCode(c);
         }
-        this._compressedData = reader.bytes(this._compressedSize);
+        this._compressedData = reader.read(this._compressedSize);
         reader.seek(position);
     }
 
@@ -484,24 +541,15 @@ zip.BitReader = class {
 
 zip.BinaryReader = class {
 
-    constructor(buffer, start, end) {
+    constructor(buffer) {
         this._buffer = buffer;
+        this._position = 0;
+        this._length = buffer.length;
         this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-        this._position = start;
-        this._end = end;
     }
 
-    match(signature) {
-        if (this._position + signature.length > this._end) {
-            return false;
-        }
-        for (let i = 0; i < signature.length; i++) {
-            if (this._buffer[this._position + i] != signature[i]) {
-                return false;
-            }
-        }
-        this._position += signature.length;
-        return true;
+    get length() {
+        return this._length;
     }
 
     get position() {
@@ -509,28 +557,20 @@ zip.BinaryReader = class {
     }
 
     seek(position) {
-        this._position = position >= 0 ? position : this._end + position;
+        this._position = position >= 0 ? position : this._length + position;
     }
 
-    peek() {
-        return this._position < this._end;
-    }
-
-    skip(size) {
-        if (this._position + size > this._end) {
+    skip(offset) {
+        this._position += offset;
+        if (this._position > this._length) {
             throw new zip.Error('Data not available.');
         }
-        this._position += size;
     }
 
-    bytes(size) {
-        if (this._position + size > this._end) {
-            throw new zip.Error('Data not available.');
-        }
-        size = size === undefined ? this._end : size;
-        const data = this._buffer.subarray(this._position, this._position + size);
-        this._position += size;
-        return data;
+    read(length) {
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        return this._buffer.subarray(position, this._position);
     }
 
     uint16() {
@@ -543,14 +583,6 @@ zip.BinaryReader = class {
         const position = this._position;
         this.skip(4);
         return this._view.getUint32(position, true);
-    }
-
-    uint64() {
-        const value = this.uint32();
-        if (this.uint32() !== 0) {
-            throw new zip.Error('Zip 64-bit offset not supported.');
-        }
-        return value;
     }
 };
 

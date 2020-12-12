@@ -76,10 +76,11 @@ openvino.ModelFactory = class {
         const extension = identifier.split('.').pop().toLowerCase();
         switch (extension) {
             case 'xml':
-                return context.request(identifier.substring(0, identifier.length - 4) + '.bin', null).then((bin) => {
+                return context.request(identifier.substring(0, identifier.length - 4) + '.bin', null).then((reader) => {
+                    const buffer = reader.read();
                     const decoder = new TextDecoder('utf-8');
                     const xml = decoder.decode(context.buffer);
-                    return open(host, xml, bin);
+                    return open(host, xml, buffer);
                 }).catch(() => {
                     const decoder = new TextDecoder('utf-8');
                     const xml = decoder.decode(context.buffer);

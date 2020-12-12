@@ -270,7 +270,7 @@ host.ElectronHost = class {
             const pathname = path.join(base || __dirname, file);
             fs.exists(pathname, (exists) => {
                 if (!exists) {
-                    reject(new Error("File not found '" + file + "'."));
+                    reject(new Error("The file '" + file + "' does not exist."));
                 }
                 else {
                     fs.readFile(pathname, encoding, (err, data) => {
@@ -278,7 +278,7 @@ host.ElectronHost = class {
                             reject(err);
                         }
                         else {
-                            resolve(data);
+                            resolve(encoding ? data : new host.ElectronHost.BinaryReader(data));
                         }
                     });
                 }
@@ -334,8 +334,10 @@ host.ElectronHost = class {
     _openFile(file) {
         if (file) {
             this._view.show('welcome spinner');
-            this._readFile(file).then((buffer) => {
-                const context = new host.ElectronHost.ElectonContext(this, path.dirname(file), path.basename(file), buffer);
+            const dirname = path.dirname(file);
+            const basename = path.basename(file);
+            this.request(dirname, basename, null).then((reader) => {
+                const context = new host.ElectronHost.ElectonContext(this, dirname, basename, reader);
                 this._view.open(context).then((model) => {
                     this._view.show(null);
                     if (model) {
@@ -358,26 +360,6 @@ host.ElectronHost = class {
                 this._update('path', null);
             });
         }
-    }
-
-    _readFile(file) {
-        return new Promise((resolve, reject) => {
-            fs.exists(file, (exists) => {
-                if (!exists) {
-                    reject(new Error('The file \'' + file + '\' does not exist.'));
-                }
-                else {
-                    fs.readFile(file, null, (err, buffer) => {
-                        if (err) {
-                            reject(err);
-                        }
-                        else {
-                            resolve(buffer);
-                        }
-                    });
-                }
-            });
-        });
     }
 
     _request(url, headers, encoding, timeout) {
@@ -502,13 +484,102 @@ host.Telemetry = class {
     }
 };
 
+host.ElectronHost.BinaryReader = class {
+
+    constructor(buffer) {
+        this._buffer = buffer;
+        this._length = buffer.length;
+        this._position = 0;
+        this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    }
+
+    get position() {
+        return this._position;
+    }
+
+    get length() {
+        return this._length;
+    }
+
+    seek(position) {
+        this._position = position >= 0 ? position : this._length + position;
+    }
+
+    skip(offset) {
+        this._position += offset;
+    }
+
+    peek(length) {
+        if (this._position === 0 && length === undefined) {
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        const end = this._position;
+        this.seek(position);
+        return this._buffer.subarray(position, end);
+    }
+
+    read(length) {
+        if (this._position === 0 && length === undefined) {
+            this._position = this._length;
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        return this._buffer.subarray(position, this._position);
+    }
+
+    byte() {
+        const position = this._position;
+        this.skip(1);
+        return this._buffer[position];
+    }
+
+    uint16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getUint16(position, true);
+    }
+
+    uint32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getUint32(position, true);
+    }
+
+    uint64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getUint64(position, true);
+    }
+
+    int16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getInt16(position, true);
+    }
+
+    int32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getInt32(position, true);
+    }
+
+    int64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getInt64(position, true);
+    }
+};
+
 host.ElectronHost.ElectonContext = class {
 
-    constructor(host, folder, identifier, buffer) {
+    constructor(host, folder, identifier, reader) {
         this._host = host;
         this._folder = folder;
         this._identifier = identifier;
-        this._buffer = buffer;
+        this._reader = reader;
     }
 
     request(file, encoding) {
@@ -519,8 +590,8 @@ host.ElectronHost.ElectonContext = class {
         return this._identifier;
     }
 
-    get buffer() {
-        return this._buffer;
+    get reader() {
+        return this._reader;
     }
 };
 

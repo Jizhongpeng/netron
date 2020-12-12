@@ -82,11 +82,13 @@ paddle.ModelFactory = class {
                         }
                     }
                     const promises = Array.from(vars).map((name) => context.request(name, null));
-                    return Promise.all(promises).then((buffers) => {
+                    return Promise.all(promises).then((readers) => {
                         const map = new Map();
                         const keys = Array.from(vars);
                         for (let i = 0; i < keys.length; i++) {
-                            map.set(keys[i], buffers[i]);
+                            const reader = readers[i];
+                            const buffer = reader.read();
+                            map.set(keys[i], buffer);
                         }
                         return new paddle.Model(metadata, format, programDesc, map);
                     }).catch((/* err */) => {

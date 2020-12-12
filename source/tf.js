@@ -251,7 +251,8 @@ tf.ModelFactory = class {
                     saved_model.meta_graphs[0].object_graph_def.nodes &&
                     saved_model.meta_graphs[0].object_graph_def.nodes.length > 0) {
                     const identifier = 'variables/variables.index';
-                    return context.request(identifier, null).then((buffer) => {
+                    return context.request(identifier, null).then((reader) => {
+                        const buffer = reader.read();
                         return tf.TensorBundle.open(buffer, identifier, context, host).then((bundle) => {
                             return new tf.Model(metadata, saved_model, format, producer, bundle);
 
@@ -282,11 +283,13 @@ tf.ModelFactory = class {
                 const base = identifier.split('.');
                 base.pop();
                 const identifier = base.join('.') + '.index';
-                return context.request(identifier, null).then((buffer) => {
+                return context.request(identifier, null).then((reader) => {
+                    const buffer = reader.read();
                     return open(buffer, identifier, context, host);
                 }).catch((/* error */) => {
                     const identifier = base.join('.') + '.ckpt';
-                    return context.request(identifier, null).then((buffer) => {
+                    return context.request(identifier, null).then((reader) => {
+                        const buffer = reader.read();
                         open(buffer, identifier, context, host);
                     });
                 });
@@ -1470,7 +1473,8 @@ tf.TensorBundle = class {
             const name = basename + '.data-' + shardIndex + '-of-' + shardCount;
             promises.push(context.request(name, null));
         }
-        return Promise.all(promises).then((shards) => {
+        return Promise.all(promises).then((readers) => {
+            const shards = readers.map((reader) => reader.read());
             return new tf.TensorBundle(format, table.entries, shards);
         }).catch((error) => {
             host.exception(error, false);
